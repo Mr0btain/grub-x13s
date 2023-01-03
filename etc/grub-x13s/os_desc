@@ -1,0 +1,24 @@
+#!/bin/bash
+# These are the descriptions for each OS, you may change them to your hearts desire if you like
+# the layout is "name class kernel_to_find linux initrd"
+#
+
+ubuntu_desc=("Ubuntu")
+ubuntu_desc[1]="ubuntu"
+ubuntu_desc[2]="/boot/vmlinuz"
+ubuntu_desc[3]="/boot/initrd.img"
+
+debian_desc=("Debian")
+debian_desc[1]="debian"
+debian_desc[2]="/boot/vmlinuz"
+debian_desc[3]="/boot/initrd.img"
+
+fedora_desc=("Fedora")
+fedora_desc[1]="fedora"
+fedora_desc[2]="/boot/vmlinuz"
+fedora_desc[3]="/boot/initrd.img"
+
+arch_desc=("Arch")
+arch_desc[1]="arch"
+arch_desc[2]="/boot/Image"
+arch_desc[3]="/boot/initramfs.img"
