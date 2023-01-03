@@ -1,193 +1,216 @@
 #!/bin/bash
 set -e
 # Version 1.4.2
-#TODO Get only name from os-release of directory, pull variables from it as well. prob in 1.4.4
+# TODO Setup per kernel Device Trees
 
-# Get system-UUID.
+# Define variables
 program_dir=/etc/grub-x13s
 NL=$'\n'
 dir=""
+info=()
+functions=()
+
+# Import config and descriptions
 . "${program_dir}"/config.cfg
-class="none"
+. "${program_dir}"/os_desc
+. "${program_dir}"/helper_functions.sh
+
+add_dtb() {
+# Copy dtb from kernel
+  printf "Finding latest kernel image.. \n"
+  cd /usr/lib && \
+  get_latest=$(find . -maxdepth 1 -name 'linux-image-*' | sort -V | tail -1)
+  latest=$(echo $get_latest | cut -c 3-)
+  printf "Latest kernel found is ${Latest} \n"
+  latest_dtb=/usr/lib/"${latest}"/"${DEVICE_TREE}"
+  printf "DTB will be ${latest_dtb} \n Making dtb directory if it doesnt exist yet \n"
+  mkdir -p "${DEFAULT_ESP}"/dtb
+  printf "Copy dtb over with universal uuid of f249803d-0d95-54f3-a28f-f26c14a03f3b \n"
+  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/f249803d-0d95-54f3-a28f-f26c14a03f3b.dtb
+  printf "Copy dtb over with personal uuid of ${sys_uuid} \n"
+  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/"${sys_uuid}".dtb
+  printf "Device trees in place! \n"
+}
+
+setup_other_os() {
+  os=$(cut -f1 -d"@" <<< ${os_probe});
+  os_part=$(echo "${os%%:*}");
+  printf "Getting ${info[0]}'s UUID on ${os_part}.. \n";
+  os_uuid=$(blkid -o value -s UUID ${os_part});
+  uuid="${os_uuid}";
+  printf "${info[0]}'s UUID is ${uuid}, mounting to scan for kernels.. \n";
+  dir="/mnt/${info[1]}";
+  mkdir -p "${dir}";
+  mount "${os_part}" /mnt/"${info[1]}";
+  get_kernels;
+  add_sub_entries;
+  printf "Unmounting ${info[0]} \n";
+  umount "${dir}";
+}
+
+set_other_os_info() {
+  if [[ "${info[0]}" == "Ubuntu" ]]; then
+    ubuntu_desc[0]="Ubuntu-Other";
+    ubuntu_desc[1]="ubuntu-other";
+  elif [[ "${info[0]}" == "Debian" ]]; then
+    debian_desc[0]="Debian-Other";
+    debian_desc[1]="debian-other";
+  elif [[ "${info[0]}" == "Fedora" ]]; then
+    fedora_desc[0]="Fedora-Other";
+    fedora_desc[1]="fedora-other";
+  elif [[ "${info[0]}" == "Arch" ]]; then
+    arch_desc[0]="Arch-Other";
+    arch_desc[1]="arch-other";
+  fi;
+}
+
+add_current_os() {
+  # Pull info of Current OS
+  get_current_info
+  # Run for loop to determine what OS were on and set ifo accordingly
+  for o in ${os_release[@]}; do
+    if [[ "$o" =~ "Ubuntu" ]]; then
+      printf "Ubuntu is main OS, adding menu items! \n"
+      info=(${ubuntu_desc[@]})
+      break;
+    elif [[ "$o" =~ "Debian" ]]; then
+      printf "Debian is main OS, adding menu items! \n"
+      info=(${debian_desc[@]})
+      break;
+    elif [[ "$o" =~ "Arch" ]]; then
+      printf "Arch is main OS, adding menu items! \n"
+      info=(${arch_desc[@]})
+      break;
+    elif [[ "$o" =~ "Fedora" ]]; then
+      printf "Fedora is main OS, adding menu items! \n"
+      info=(${fedora_desc[@]})
+      break;
+    fi;
+  done;
+  # Run Functions to add main OS to first boot entry
+  cur="${info[0]}" # This variable will be used later for something not yet implimented
+  main_os_entry # Function that actually adds main os entry
+  get_kernels # Get the Kernels installed
+  add_sub_entries # Add those as submenue items
+  set_other_os_info
+}
+
+set_boot_entry() {
+# Set default bootloader
+# This isnt used just yet, coming eventually
+  printf "Setting default boot menu entry! \n"
+  efibootmgr -c --disk=/dev/nvme0n1p1 --label="${DEFAULT_OS}" --loader='EFI\Boot\DtbLoader.efi'
+}
 
 get_current_info() {
-  sys_uuid=$(dmidecode -s system-uuid) ;
-  disk=$(mount | grep " / type" | awk '{print $1}') ;
-  os_uuid=$(blkid -o value -s UUID ${disk}) ;
-  os_release=$(cat /etc/os-release) ;
+  sys_uuid=$(dmidecode -s system-uuid)
+  disk=$(mount | grep " / type" | awk '{print $1}')
+  uuid=$(blkid -o value -s UUID ${disk})
+  main_uuid="${uuid}"
+  os_release=$(cat /etc/os-release)
 }
 
 get_kernels() {
   # Find installed kernels
-  printf "Finding installed kernels for "${name}" \n" ;
-  kernels=$(find ${dir}${kern_to_find}) ;
-  printf "Found Kernels ${kernels[@]} \n" ;
-  printf "Adding menu entry for each of ${name}'s Kernels in submenu.. \n" ;
-}
-
-setup_other_os() {
-  os=$(cut -f1 -d"@" <<< ${os_probe}) ;
-  os_part=$(echo "${os%%:*}") ;
-  printf "Getting ${name}'s UUID on ${os_part}.. \n" ;
-  os_uuid=$(blkid -o value -s UUID ${os_part}) ;
-  printf "${name}'s UUID is ${os_uuid}, mounting to scan for kernels.. \n" ;
-  mount "${os_part}" /mnt/${class} ;
-  dir="/mnt/${class}" ;
-  get_kernels ;
-  sub_entry ;
-  printf "Unmounting ${name} \n" ;
-  umount "${dir}" ;
+  printf "\n Finding installed kernels for "${info[0]}" \n";
+  kernels+=$(find ${dir}${info[2]}*);
+  printf "\n Found Kernels \n";
 }
 
 probe() {
-  printf "Probing for Operating Systems.. \n" ;
+  printf "\n Probing for Operating Systems.. \n";
 # Probe for different OS'
-  os_probed=($(os-prober)) ;
+  os_probed=($(os-prober));
 
 # Ubuntu
-  for u in "${os_probed[@]}" ; do
-    if [[ "$u" =~ "Ubuntu" ]] ; then
-      printf "Found Ubuntu! adding menu entry \n" ;
-      os_probe=$u ;
-      add_ubuntu ;
-      break
-    fi ;
-  done ;
+  for u in "${os_probed[@]}"; do
+    if [[ "$u" =~ "Ubuntu" ]]; then
+      printf "Found Ubuntu! adding menu entry \n";
+      os_probe=$u;
+      add_ubuntu;
+      break;
+    fi;
+  done;
       
   for d in "${os_probed[@]}" ; do
     if [[ "$d" =~ ":Debian" ]] ; then
-      printf "Found Debian! adding menu entry \n" ;
-      os_probe=$d ;
-      add_debian ;
-      break
-    fi ;
-  done ;
+      printf "Found Debian! adding menu entries \n";
+      os_probe=$d;
+      add_debian;
+      break;
+    fi;
+  done;
+
+  for f in "${os_probed[@]}"; do
+    if [[ "$f" =~ ":Fedora" ]]; then
+      printf "Found Fedora! adding menu enties \n";
+      os_probe=$f;
+      add_fedora;
+      break;
+    fi;
+  done;
+
+  for a in "${os_probed[@]}"; do
+    if [[ "$a" =~ ":Arch" ]]; then
+      printf "Found Arch! adding menu entries \n";
+      os_probe=$a;
+      add_arch;
+      break;
+    fi;
+  done;
 
   for m in "${os_probed[@]}" ; do
     if [[ "$m" =~ "Microsoft" ]] ; then
-      printf "Found Windows! adding menu entry \n" ;
-      windows_probe=$m ;
-      add_windows ;
-      break
-    fi ;
-  done ;
-
-  for a in "${os_probed[@]}" ; do
-    if [[ "$a" =~ ":Arch" ]] ; then
-      printf "Found Arch! adding menu entry \n" ;
-      os_probe=$a ;
-      add_arch ;
-      break
-    fi ;
-  done ;
-
-  for f in "${os_probed[@]}" ; do
-    if [[ "$f" =~ ":Fedora" ]] ; then
-      printf "Found Fedora! adding menu entry \n" ;
-      os_probe=$f;
-      add_fedora ;
-      break
-    fi ;
-  done ;
-} ;
-
-main_os_entry() {
-  os_entries+=(
-    "menuentry '${name}' --class "${class}" {
-        insmod gzio
-	      insmod part_gpt
-	      insmod ext2
-	  search --no-floppy --fs-uuid --set=root "${os_uuid}"
-	  linux   "${linux}" root=UUID="${os_uuid}" "${OPTIONS}"
-	  initrd  "${initrd}"
-    } ${NL}"
-  ) ;
-}
-
-sub_entry() {
-  for k in ${kernels[@]}; do
-    if [[ "$k" =~ "." ]] ; 
-    then sub_entry+=(
-        "menuentry '"${name}"' Linux "${k//[!0-9.xs]/}"' --class "${class}" {
-	          insmod gzio
-	          insmod part_gpt
-	          insmod ext2
-	      search --no-floppy --fs-uuid --set=root "${os_uuid}"
-	      linux	${k} root=UUID="${os_uuid}" "${OPTIONS}"
-	      initrd	"${initrd}"-"${kern//[!0-9.xs]/}"
-        } ${NL}"
-      )
-    fi ;
-  done ;
-  submenues+=(
-    "submenu '${class}' {
-      ${sub_entry[@]}
-    } ${NL}"
-    ) ;
-  sub_entry=""
-}
-
-add_current_os() {
-  get_current_info
-  for o in ${os_release[@]} ; do
-    if [[ "$o" =~ "Ubuntu" ]] ; then
-      printf "Ubuntu is main OS, adding menu items! \n"
-      name="Ubuntu"
-      class="ubuntu" ;
-      initrd="/boot/initrd.img" ;
-      linux="/boot/vmlinuz" ;
-      kern_to_find="/boot/vmlin*" ;
-      break
-    elif [[ "$o" =~ "Debian" ]] ; then
-      printf "Debian is main OS, adding menu items! \n"
-      name="Debian" ;
-      class="debian" ;
-      initrd="/boot/initrd.img" ;
-      linux="/boot/vmlinuz" ;
-      main_os_entry ;
-      kern_to_find="/boot/vmlin*" ;
-      break
-    elif [[ "$o" =~ "Arch" ]] ; then
-      printf "Arch is main OS, adding menu items! \n"
-      name="Arch" ;
-      class="arch" ;
-      initrd="/boot/Image" ;
-      linux="/boot/initramfs.img" ;
-      kern_to_find="/boot/Imag*" ;
-      break
-    elif [[ "$o" =~ "Fedora" ]] ; then
-      printf "Fedora is main OS, adding menu items! \n"
-      name="Fedora"
-      class="fedora" ;
-      initrd="/boot/initrd.img" ;
-      linux="/boot/vmlinuz" ;
-      kern_to_find="/boot/vmlin*" ;
-      break
-    fi ;
-  done ; 
-  sub_name="currentos" ;
-  cur="${name}" ;
-  main_os_entry ;
-  get_kernels ;
-  sub_entry ;
+      printf "Found Windows! adding menu entry \n";
+      windows_probe=$m;
+      add_windows;
+      break;
+    fi;
+  done;
 }
 
 add_ubuntu() {
   # add Ubuntu menu entry
-  name="UbuntuOther" ;
-  class="ubuntuother" ;
-  kern_to_find="/boot/vmlinu*" ;
-  setup_other_os ;
-  main_os_entry ;
+  info=(${ubuntu_desc[@]})
+  printf "Adding "${info[0]}" with description: \n"
+  printf "'%s'\n" "${info[@]}"
+  setup_other_os
+  main_os_entry
 }
 
+add_debian() {
+    # add Debian menu entry
+  info=(${debian_desc[@]})
+  printf "Adding "${info[0]}" with description: \n"
+  printf "'%s'\n" "${info[@]}"
+  setup_other_os
+  main_os_entry
+}
+
+add_fedora() {
+    # add Fedora menu entry
+  info=(${fedora_desc[@]})
+  printf "Adding "${info[0]}" with description: \n"
+  printf "'%s'\n" "${info[@]}"
+  setup_other_os
+  main_os_entry
+}
+
+add_arch() {
+  # add Arch menu entry
+  info=(${arch_desc[@]})
+  printf "Adding "${info[0]}" with description: \n"
+  printf "'%s'\n" "${info[@]}"
+  setup_other_os
+  main_os_entry
+}
 
 add_windows() {
 # Add Windows entry
-  printf "Getting windows UUID.. \n" ;
-  windows_part=$(cut -f1 -d"@" <<< ${windows_probe}) ;
-  windows_uuid=$(blkid -o value -s UUID ${windows_part}) ;
-  printf "Windows UUID is ${windows_uuid} \n Adding menu entry \n" ;
+  printf "Getting windows UUID.. \n"
+  windows_part=$(cut -f1 -d"@" <<< ${windows_probe})
+  windows_uuid=$(blkid -o value -s UUID ${windows_part})
+  printf "Windows UUID is ${windows_uuid} \n Adding menu entry \n"
   os_entries+=(
     "menuentry 'Windows Boot Manager (on ${windows_part})' --class windows {
 	      insmod part_gpt
@@ -195,124 +218,171 @@ add_windows() {
 	  search --no-floppy --fs-uuid --set=root "${windows_uuid}"
 	  chainloader /EFI/Microsoft/Boot/bootmgfw.efi
     } ${NL}"
-  ) ;
+  );
 }
 
-add_arch() {
-  # add Arch menu entry
-  name="Arch" ;
-  class="arch" ;
-  kern_to_find="/boot/Imag*" ;
-  setup_other_os ;
-  main_os_entry ;
+add_sub_entries() {
+  printf "Adding menu entry for each of "${info[0]}"'s Kernels in submenu.. \n";
+  for k in $kernels[@]; do
+    if [[ $k =~ "." ]]; then
+      init=${info[3]}
+      linux=${k}
+      sub_entries+=(
+        "menuentry '${info[0]} Linux ${k//[!0-9.xs]/}' --class "${info[1]}" {
+	          insmod gzio
+	          insmod part_gpt
+	          insmod ext2
+	      search --no-floppy --fs-uuid --set=root "${uuid}"
+	      linux	${linux//"[@]"} root=UUID="${uuid}" "${OPTIONS}" quite splash $vt_handoff
+	      initrd	${init//"[@]"}-${k//[!0-9.xs]/}
+        } ${NL}"
+        );
+    fi;
+  done;
+  # Add submenu to submenues array
+  submenues+=(
+    "submenu 'Previous Kernels for ${info[1]}' {
+      ${sub_entries[@]}
+    } ${NL}"
+    );
+  # Clear the sub entries just in case so they dont get inter mingled
+  unset sub_entries;
+  unset kernels;
 }
 
-add_fedora() {
-    # add Ubuntu menu entry
-  name="Fedora" ;
-  class="fedora" ;
-  kern_to_find="/boot/vmlin*" ;
-  setup_other_os ;
-  main_os_entry ;
-}
+main_os_entry() {
+  linux=${info[2]}
+  init=${info[3]}
+  os_entries+=(
+    "menuentry '${info[0]}' --class "${info[1]}" {
+        insmod gzio
+	      insmod part_gpt
+	      insmod ext2
+        gfxmode $linux_gfx_mode
+	if [ x$grub_platform = xxen ]; then insmod xzio; insmod lzopio; fi
+	  search --no-floppy --fs-uuid --set=root "${uuid}"
+	  linux   ${linux//][@} root=UUID="${uuid}" "${OPTIONS}" quite splash $vt_handoff
+	  initrd  ${init//][@}
+    } ${NL}"
+  );
 
-add_debian() {
-    # add Ubuntu menu entry
-  name="Debian" ;
-  class="debian" ;
-  kern_to_find="/boot/vmlinu*" ;
-  setup_other_os ;
-  main_os_entry ;
 }
-
 
 make_grub_config() {
+# Check for splash boot
+splash
 # Make grub config
-  printf "Making config file for grub in program file directory \n" ;
+  printf "Making config file for grub in program file directory \n"
 cat <<EOF > "${program_dir}"/Boot/grub.cfg
-    insmod all_video
-    insmod part_gpt
-    insmod part_msdos
-    insmod part_ext2
+insmod part_gpt
+insmod part_msdos
+insmod part_ext2
+insmod gfxmenu
+insmod all_video
+insmod vga
+insmod png
 
-    set timeout=${TIMEOUT}
+function savedefault {
+  if [ -z "${boot_once}" ]; then
+    saved_entry="${chosen}"
+    save_env saved_entry
+  fi
+}
+function initrdfail {
+    if [ -n "${have_grubenv}" ]; then if [ -n "${partuuid}" ]; then
+      if [ -z "${initrdfail}" ]; then
+        set initrdfail=1
+        if [ -n "${boot_once}" ]; then
+          set prev_entry="${default}"
+          save_env prev_entry
+        fi
+      fi
+      save_env initrdfail
+    fi; fi
+}
+function recordfail {
+  set recordfail=1
+  if [ -n "${have_grubenv}" ]; then if [ -z "${boot_once}" ]; then save_env recordfail; fi; fi
+}
 
-    function savedefault {
-      if [ -z "${boot_once}" ]; then
-      saved_entry="${chosen}"
-      save_env saved_entry
+function gfxmode {
+	set gfxpayload="${1}"
+	if [ "${1}" = "keep" ]; then
+		set vt_handoff=vt.handoff=7
+	else
+		set vt_handoff=
+	fi
+}
+if [ "${recordfail}" != 1 ]; then
+  if [ -e ${prefix}/gfxblacklist.txt ]; then
+    if [ ${grub_platform} != pc ]; then
+      set linux_gfx_mode=keep
+    elif hwmatch ${prefix}/gfxblacklist.txt 3; then
+      if [ ${match} = 0 ]; then
+        set linux_gfx_mode=keep
+      else
+        set linux_gfx_mode=text
+      fi
+    else
+      set linux_gfx_mode=text
     fi
-    }
+  else
+    set linux_gfx_mode=keep
+  fi
+else
+  set linux_gfx_mode=text
+fi
+export linux_gfx_mode
 
-    set menu_color_normal=white/black
-    set menu_color_highlight=black/light-gray
+${os_entries[@]}
 
-    ${os_entries[@]}
+${submenues[@]}
 
-    ${submenues[@]}
 EOF
+
+printf "Made grub.cfg with these boot flags: \n"
+printf "${OPTIONS[@]} \n"
 }
 
 make_boot() {
 # Fixup the Grub bootloader
-  printf "Making Standalone grub binary.. \n" ;
+  printf "Making Standalone grub binary.. \n"
+  (
     grub-mkstandalone \
         --format=arm64-efi \
         --output="${program_dir}"/Boot/grubaa64.efi \
         --directory="${program_dir}"/grub-arm64-efi \
         --locales="" \
-        "boot/grub/grub.cfg="${program_dir}"/Boot/grub.cfg" ;
+        "boot/grub/grub.cfg="${program_dir}"/Boot/grub.cfg"
+  )
 
 # Copy the created files and DtbLoader to efi
-  printf "Add DtbLoader as fallback bootaa64. just in case \n" ;
-  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/ ;
-  printf "Add DtbLoader as DtbLoader.efi for default bootloader entry if you desire to set it \n" ;
-  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/DtbLoader.efi ;
-  printf "Add Grub standalone efi as grubaa64.efi \n" ;
-  cp "${program_dir}"/Boot/grubaa64.efi "${DEFAULT_ESP}"/EFI/Boot/ ;
-  printf "Add Grub config file \n" ;
-  cp "${program_dir}"/Boot/grub.cfg "${DEFAULT_ESP}"/EFI/Boot/ ;
+  printf "Add DtbLoader as fallback bootaa64. just in case \n"
+  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/
+  printf "Add DtbLoader as DtbLoader.efi for default bootloader entry if you desire to set it \n"
+  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/DtbLoader.efi
+  printf "Add Grub standalone efi as grubaa64.efi \n"
+  cp "${program_dir}"/Boot/grubaa64.efi "${DEFAULT_ESP}"/EFI/Boot/
+  printf "Add Grub config file \n"
+  cp "${program_dir}"/Boot/grub.cfg "${DEFAULT_ESP}"/EFI/Boot/
 }
 
-add_dtb() {
-# Copy dtb from kernel
-  printf "Finding latest kernel image.. \n" ;
-  cd /usr/lib && \
-  get_latest=$(find . -maxdepth 1 -name 'linux-image-*' | sort -V | tail -1) ;
-  latest=$(echo $get_latest | cut -c 3-) ;
-  printf "Latest kernel found is ${Latest} \n" ;
-  latest_dtb=/usr/lib/"${latest}"/"${DEVICE_TREE}" ;
-  printf "DTB will be ${latest_dtb} \n Making dtb directory if it doesnt exist yet \n" ;
-  mkdir -p "${DEFAULT_ESP}"/dtb ;
-  printf "Copy dtb over with universal uuid of f249803d-0d95-54f3-a28f-f26c14a03f3b \n" ;
-  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/f249803d-0d95-54f3-a28f-f26c14a03f3b.dtb ;
-  printf "Copy dtb over with personal uuid of ${sys_uuid} \n" ;
-  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/"${sys_uuid}".dtb ;
-  printf "Device trees in place! \n" ;
-}
-
-set_boot_entry() {
-# Set default bootloader
-  printf "Setting default boot menu entry! \n"
-  efibootmgr -c --disk=/dev/nvme0n1p1 --label="${DEFAULT_OS}" --loader='EFI\Boot\DtbLoader.efi'
-}
-
-run() {
+main() {
 # Do the stuff
   printf "Fixing up the bootloader!
   Boot flags are ${OPTIONS[@]}
   These can be changed along with a few other config options at /etc/grub-x13s/config.cfg
   NOTE: make sure your initramfs-tools modules file includes the correct modules!!!
-  Double check for errors, ive made many haha. \n" ;
-  add_current_os ;
-  probe ;
-  make_grub_config ;
-  add_dtb ;
-  make_boot ;
+  Double check for errors, ive made many setting mine haha. \n"
+  add_current_os
+  probe
+  make_grub_config
+  add_dtb
+  make_boot
   printf "The Ole Girl should be ready to boot all the stuff you have, i think. maybe.
   god i sure hope so this is taking up a considerable amount of my life. an i could
   really use a shower by now lol \n"
 }
 
 # Start
-run
+main;
