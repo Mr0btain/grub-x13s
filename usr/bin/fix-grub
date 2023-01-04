@@ -9,6 +9,7 @@ NL=$'\n'
 dir=""
 info=()
 functions=()
+m="$"
 
 # Import config and descriptions
 . "${program_dir}"/config.cfg
@@ -233,7 +234,7 @@ add_sub_entries() {
 	          insmod part_gpt
 	          insmod ext2
 	      search --no-floppy --fs-uuid --set=root "${uuid}"
-	      linux	${linux//"[@]"} root=UUID="${uuid}" "${OPTIONS}" quite splash $vt_handoff
+	      linux	${linux//"[@]"} root=UUID="${uuid}" "${OPTIONS}"
 	      initrd	${init//"[@]"}-${k//[!0-9.xs]/}
         } ${NL}"
         );
@@ -261,7 +262,7 @@ main_os_entry() {
         gfxmode $linux_gfx_mode
 	if [ x$grub_platform = xxen ]; then insmod xzio; insmod lzopio; fi
 	  search --no-floppy --fs-uuid --set=root "${uuid}"
-	  linux   ${linux//][@} root=UUID="${uuid}" "${OPTIONS}" quite splash $vt_handoff
+	  linux   ${linux//][@} root=UUID="${uuid}" "${OPTIONS}"
 	  initrd  ${init//][@}
     } ${NL}"
   );
@@ -269,8 +270,6 @@ main_os_entry() {
 }
 
 make_grub_config() {
-# Check for splash boot
-splash
 # Make grub config
   printf "Making config file for grub in program file directory \n"
 cat <<EOF > "${program_dir}"/Boot/grub.cfg
