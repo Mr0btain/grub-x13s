@@ -1,7 +1,7 @@
 #! /bin/bash
 #
 # This is a simple kernel hook to fix the grub bootloader when a new kernel is installed
-# And hopefully whe it is initially installed on a new system
+# And hopefully when it is initially installed on a new system
 #
 
 printf "Running grub fix.."
