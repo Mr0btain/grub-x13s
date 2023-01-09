@@ -1,8 +1,8 @@
 Package: x13s-grub-fix
-Version: 1.4.4
+Version: 1.4.6
 Priority: optional
 Architecture: arm64
-Depends: grub-common, efibootmgr, plymouth-x11
+Depends: grub-common, efibootmgr, plymouth-x11, os-prober
 Maintainer: Mr0btain (wnbarbe1@gmail.com)
 Description: Grub fixup for Lenovo X13S
  This package provides a fixup for the grub bootloader for x13s
