@@ -9,7 +9,6 @@ NL=$'\n'
 dir=""
 info=()
 functions=()
-m="$"
 
 # Import config and descriptions
 . "${program_dir}"/config.cfg
@@ -17,20 +16,9 @@ m="$"
 . "${program_dir}"/helper_functions.sh
 
 add_dtb() {
-# Copy dtb from kernel
-  printf "Finding latest kernel image.. \n"
-  cd /usr/lib && \
-  get_latest=$(find . -maxdepth 1 -name 'linux-image-*' | sort -V | tail -1)
-  latest=$(echo $get_latest | cut -c 3-)
-  printf "Latest kernel found is ${Latest} \n"
-  latest_dtb=/usr/lib/"${latest}"/"${DEVICE_TREE}"
-  printf "DTB will be ${latest_dtb} \n Making dtb directory if it doesnt exist yet \n"
-  mkdir -p "${DEFAULT_ESP}"/dtb
-  printf "Copy dtb over with universal uuid of f249803d-0d95-54f3-a28f-f26c14a03f3b \n"
-  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/f249803d-0d95-54f3-a28f-f26c14a03f3b.dtb
-  printf "Copy dtb over with personal uuid of ${sys_uuid} \n"
-  cp "${latest_dtb}" "${DEFAULT_ESP}"/dtb/"${sys_uuid}".dtb
-  printf "Device trees in place! \n"
+# Copy dtb for kernel
+  dtb=/usr/lib/linux-image${k//[!0-9.xsrc-]/}/qcom/sc8280xp-lenovo-thinkpad-x13s.dtb
+  cp ${dtb} /boot/dtbs/sc8280xp-lenovo-thinkpad-x13s${k//[!0-9.xsrc-]/}.dtb
 }
 
 setup_other_os() {
@@ -113,9 +101,9 @@ get_current_info() {
 
 get_kernels() {
   # Find installed kernels
-  printf "\n Finding installed kernels for "${info[0]}" \n";
+  printf " Finding installed kernels for "${info[0]}" \n";
   kernels+=$(find ${dir}${info[2]}*);
-  printf "\n Found Kernels \n";
+  printf "Found Kernels \n";
 }
 
 probe() {
@@ -220,6 +208,7 @@ add_windows() {
 	  chainloader /EFI/Microsoft/Boot/bootmgfw.efi
     } ${NL}"
   );
+  printf "\n"
 }
 
 add_sub_entries() {
@@ -228,16 +217,20 @@ add_sub_entries() {
     if [[ $k =~ "." ]]; then
       init=${info[3]}
       linux=${k}
+      devtree=sc8280xp-lenovo-thinkpad-x13s${k//[!0-9.xsrc-]/}.dtb
+      printf "Adding kernel ${linux//"[@]"} \n"
       sub_entries+=(
-        "menuentry '${info[0]} Linux ${k//[!0-9.xs]/}' --class "${info[1]}" {
+        "menuentry '${info[0]} Linux ${k//[!0-9.xsrc-]/}' --class "${info[1]}" {
 	          insmod gzio
 	          insmod part_gpt
 	          insmod ext2
 	      search --no-floppy --fs-uuid --set=root "${uuid}"
 	      linux	${linux//"[@]"} root=UUID="${uuid}" "${OPTIONS}"
-	      initrd	${init//"[@]"}-${k//[!0-9.xs]/}
+	      initrd	${init//"[@]"}${k//[!0-9.xsrc-]/}
+        devicetree /boot/dtbs/${devtree}
         } ${NL}"
         );
+      add_dtb;
     fi;
   done;
   # Add submenu to submenues array
@@ -254,18 +247,22 @@ add_sub_entries() {
 main_os_entry() {
   linux=${info[2]}
   init=${info[3]}
+  devtree=sc8280xp-lenovo-thinkpad-x13s.dtb
+  unm="$(uname -r)"
   os_entries+=(
     "menuentry '${info[0]}' --class "${info[1]}" {
         insmod gzio
 	      insmod part_gpt
 	      insmod ext2
-        gfxmode $linux_gfx_mode
+
 	if [ x$grub_platform = xxen ]; then insmod xzio; insmod lzopio; fi
 	  search --no-floppy --fs-uuid --set=root "${uuid}"
 	  linux   ${linux//][@} root=UUID="${uuid}" "${OPTIONS}"
 	  initrd  ${init//][@}
+    devicetree /boot/dtbs/"${devtree}"
     } ${NL}"
   );
+  cp /usr/lib/linux-image-${unm}/qcom/${devtree} /boot/dtbs/${devtree};
 
 }
 
@@ -287,51 +284,6 @@ function savedefault {
     save_env saved_entry
   fi
 }
-function initrdfail {
-    if [ -n "${have_grubenv}" ]; then if [ -n "${partuuid}" ]; then
-      if [ -z "${initrdfail}" ]; then
-        set initrdfail=1
-        if [ -n "${boot_once}" ]; then
-          set prev_entry="${default}"
-          save_env prev_entry
-        fi
-      fi
-      save_env initrdfail
-    fi; fi
-}
-function recordfail {
-  set recordfail=1
-  if [ -n "${have_grubenv}" ]; then if [ -z "${boot_once}" ]; then save_env recordfail; fi; fi
-}
-
-function gfxmode {
-	set gfxpayload="${1}"
-	if [ "${1}" = "keep" ]; then
-		set vt_handoff=vt.handoff=7
-	else
-		set vt_handoff=
-	fi
-}
-if [ "${recordfail}" != 1 ]; then
-  if [ -e ${prefix}/gfxblacklist.txt ]; then
-    if [ ${grub_platform} != pc ]; then
-      set linux_gfx_mode=keep
-    elif hwmatch ${prefix}/gfxblacklist.txt 3; then
-      if [ ${match} = 0 ]; then
-        set linux_gfx_mode=keep
-      else
-        set linux_gfx_mode=text
-      fi
-    else
-      set linux_gfx_mode=text
-    fi
-  else
-    set linux_gfx_mode=keep
-  fi
-else
-  set linux_gfx_mode=text
-fi
-export linux_gfx_mode
 
 ${os_entries[@]}
 
@@ -356,12 +308,13 @@ make_boot() {
   )
 
 # Copy the created files and DtbLoader to efi
-  printf "Add DtbLoader as fallback bootaa64. just in case \n"
-  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/
-  printf "Add DtbLoader as DtbLoader.efi for default bootloader entry if you desire to set it \n"
-  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/DtbLoader.efi
-  printf "Add Grub standalone efi as grubaa64.efi \n"
-  cp "${program_dir}"/Boot/grubaa64.efi "${DEFAULT_ESP}"/EFI/Boot/
+#  printf "Add DtbLoader as fallback bootaa64. just in case \n"
+#  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/
+#  printf "Add DtbLoader as DtbLoader.efi for default bootloader entry if you desire to set it \n"
+#  cp "${program_dir}"/Boot/bootaa64.efi "${DEFAULT_ESP}"/EFI/Boot/DtbLoader.efi
+  printf "\n"
+  printf "Add Grub standalone \n"
+  cp "${program_dir}"/Boot/grubaa64.efi "${DEFAULT_ESP}"/EFI/Boot/bootaa64.efi
   printf "Add Grub config file \n"
   cp "${program_dir}"/Boot/grub.cfg "${DEFAULT_ESP}"/EFI/Boot/
 }
@@ -372,15 +325,14 @@ main() {
   Boot flags are ${OPTIONS[@]}
   These can be changed along with a few other config options at /etc/grub-x13s/config.cfg
   NOTE: make sure your initramfs-tools modules file includes the correct modules!!!
-  Double check for errors, ive made many setting mine haha. \n"
+  Double check for errors, ive made many in mine haha. \n"
+  printf "\n"
+  mkdir -p /boot/dtbs
   add_current_os
   probe
   make_grub_config
-  add_dtb
   make_boot
-  printf "The Ole Girl should be ready to boot all the stuff you have, i think. maybe.
-  god i sure hope so this is taking up a considerable amount of my life. an i could
-  really use a shower by now lol \n"
+  printf "The Ole Girl should be ready to boot \n"
 }
 
 # Start
