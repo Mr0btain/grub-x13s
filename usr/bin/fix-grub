@@ -13,7 +13,6 @@ functions=()
 # Import config and descriptions
 . "${program_dir}"/config.cfg
 . "${program_dir}"/os_desc
-. "${program_dir}"/helper_functions.sh
 
 add_dtb() {
 # Copy dtb for kernel
